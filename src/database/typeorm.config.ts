@@ -21,5 +21,10 @@ export function buildDataSourceOptions(env: NodeJS.ProcessEnv = process.env): Da
     migrationsTableName: 'migrations',
     synchronize: false,
     logging: false,
+    // uuid PKs default to gen_random_uuid(), built into Postgres 13+; without
+    // these two settings TypeORM would emit uuid_generate_v4() and try to
+    // install the uuid-ossp extension on every connect.
+    uuidExtension: 'pgcrypto',
+    installExtensions: false,
   };
 }
