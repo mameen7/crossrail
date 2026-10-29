@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs pending migrations (which include seed data), then starts the API.
+# Runs pending migrations, then starts the API.
 # Compose only starts this container once Postgres reports healthy, so no polling is needed.
 set -eu
 

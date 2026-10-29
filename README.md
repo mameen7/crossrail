@@ -3,7 +3,7 @@ A stablecoin cross-border payments sandbox: multi-currency wallets, FX swaps and
 
 ## Requirements
 
-- Node 22+ (22.12 or later; see `.nvmrc`), Yarn 1.x, Docker with Compose v2
+- Node 24 LTS (24.9 or later; see `.nvmrc`), Yarn 1.x, Docker with Compose v2
 
 ## Setup and run
 
