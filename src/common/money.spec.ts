@@ -2,8 +2,10 @@ import Decimal from 'decimal.js';
 import {
   isAmountString,
   parseAmount,
+  parseRate,
   roundDownAmount,
   toAmountString,
+  toLedgerAmountString,
   toRateString,
 } from './money';
 
@@ -93,6 +95,33 @@ describe('money', () => {
 
     it('renders exponent input in fixed-point notation', () => {
       expect(toRateString(new Decimal('1e-7'))).toBe('0.000000100000000000');
+    });
+  });
+
+  describe('parseRate (stored values)', () => {
+    it('accepts what numeric(38,18) reads back as, and the bare "1" a deposit writes', () => {
+      expect(parseRate('1').equals(1)).toBe(true);
+      expect(parseRate('0.000675675675675676').toFixed(18)).toBe('0.000675675675675676');
+    });
+
+    it.each(['1e3', '-1', ' 1', '1.0000000000000000001', ''])('rejects %j', (value) => {
+      expect(() => parseRate(value)).toThrow(TypeError);
+    });
+
+    it('rejects a JS number', () => {
+      expect(() => parseRate(1 as unknown as string)).toThrow(TypeError);
+    });
+  });
+
+  describe('toLedgerAmountString', () => {
+    it('renders signed deltas at 8 dp without rounding', () => {
+      expect(toLedgerAmountString(new Decimal('10.5'))).toBe('10.50000000');
+      expect(toLedgerAmountString(new Decimal('-0.00000001'))).toBe('-0.00000001');
+    });
+
+    it('refuses zero and anything finer than 8 dp instead of rounding it', () => {
+      expect(() => toLedgerAmountString(new Decimal(0))).toThrow(/non-zero/);
+      expect(() => toLedgerAmountString(new Decimal('1.000000001'))).toThrow(/at most 8 dp/);
     });
   });
 });

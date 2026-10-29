@@ -1,7 +1,5 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { createServer, Server } from 'node:http';
-import { AddressInfo } from 'node:net';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
@@ -13,9 +11,9 @@ import { UsdRateTable } from '../src/fx/fiat';
 import { allPairRates } from '../src/fx/pricing';
 import { WalletBalancesDto, WalletDto } from '../src/wallets/dto/wallet.dto';
 import { truncateAll } from './db';
+import { FxStub, startBlackHole, startFxProvider } from './fx-stub';
 
-/** TEST-NET-1 (RFC 5737): reserved for documentation and never routed. */
-const UNROUTABLE_URL = 'http://192.0.2.1/v6/latest/USD';
+/** The provider timeout configured for apps whose provider hangs. */
 const DOWN_TIMEOUT_MS = 300;
 
 const CACHED_TABLE: UsdRateTable = {
@@ -56,7 +54,7 @@ async function insertFxRows(
   }
 }
 
-/** Creates a wallet holding the given balances (set directly; deposits arrive in phase 4). */
+/** Creates a wallet holding the given balances, set directly so this suite stays independent of the deposits endpoint. */
 async function walletWith(
   app: INestApplication<App>,
   db: DataSource,
@@ -102,13 +100,25 @@ function expectMatrix(
 }
 
 describe('GET /api/v1/rates (scenario 12)', () => {
-  describe('with the provider unreachable', () => {
+  // A local server that accepts connections and never answers: the provider
+  // is "down" in the way that exercises the timeout, with no network involved.
+  let blackHole: FxStub;
+
+  beforeAll(async () => {
+    blackHole = await startBlackHole();
+  });
+
+  afterAll(async () => {
+    await blackHole.close();
+  });
+
+  describe('with the provider hanging', () => {
     let app: INestApplication<App>;
     let db: DataSource;
 
     // A fresh app per test, so no in-memory snapshot carries over.
     beforeEach(async () => {
-      app = await bootApp({ url: UNROUTABLE_URL, timeoutMs: DOWN_TIMEOUT_MS });
+      app = await bootApp({ url: blackHole.url, timeoutMs: DOWN_TIMEOUT_MS });
       db = app.get(DataSource);
       await truncateAll(db);
     });
@@ -118,12 +128,17 @@ describe('GET /api/v1/rates (scenario 12)', () => {
       await app.close();
     });
 
-    it('serves all 20 pairs from FALLBACK_RATES when fx_rates is empty, bounded by the timeout', async () => {
+    it('serves all 20 pairs from FALLBACK_RATES when fx_rates is empty, as soon as the timeout fires', async () => {
+      const hitsBefore = blackHole.hits();
       const started = Date.now();
       const body = await getRates(app);
+      const elapsed = Date.now() - started;
 
-      // Well under the 3s default: the configured timeout is what bounded the wait.
-      expect(Date.now() - started).toBeLessThan(2000);
+      // The provider was asked and never answered, so only the configured
+      // timeout can have ended the wait: not sooner, and not by much later.
+      expect(blackHole.hits()).toBe(hitsBefore + 1);
+      expect(elapsed).toBeGreaterThanOrEqual(DOWN_TIMEOUT_MS - 10);
+      expect(elapsed).toBeLessThan(DOWN_TIMEOUT_MS + 1000);
       expectMatrix(body, FALLBACK_RATES, 'fallback', FALLBACK_RATES_AS_OF.toISOString());
     });
 
@@ -162,23 +177,14 @@ describe('GET /api/v1/rates (scenario 12)', () => {
   });
 
   describe('with the provider up (a local stub server; no network)', () => {
-    let stub: Server;
-    let stubUrl: string;
-    let hits = 0;
+    let provider: FxStub;
 
     beforeAll(async () => {
-      stub = createServer((_req, res) => {
-        hits += 1;
-        res.writeHead(200, { 'content-type': 'application/json' }).end(LIVE_BODY);
-      });
-      await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
-      stubUrl = `http://127.0.0.1:${(stub.address() as AddressInfo).port}/v6/latest/USD`;
+      provider = await startFxProvider(LIVE_BODY);
     });
 
     afterAll(async () => {
-      await new Promise<void>((resolve, reject) =>
-        stub.close((err) => (err ? reject(err) : resolve())),
-      );
+      await provider.close();
     });
 
     it('serves live rates, persists the whole table, then serves it as cached once the provider is down', async () => {
@@ -190,7 +196,7 @@ describe('GET /api/v1/rates (scenario 12)', () => {
         XAF: '557.560000000000000000',
       };
 
-      const live = await bootApp({ url: stubUrl, timeoutMs: 1000 });
+      const live = await bootApp({ url: provider.url, timeoutMs: 1000 });
       const db = live.get(DataSource);
       let fetchedAt: string;
       try {
@@ -201,7 +207,7 @@ describe('GET /api/v1/rates (scenario 12)', () => {
 
         expectMatrix(body, liveTable, 'live', fetchedAt);
         expect(new Date(fetchedAt).getTime()).toBeGreaterThanOrEqual(before);
-        expect(hits).toBe(1);
+        expect(provider.hits()).toBe(1);
 
         // The whole table, with exact digits and one fetched_at, landed in fx_rates.
         const rows: { quote_currency: string; rate: string; source: string; fetched_at: Date }[] =
@@ -218,12 +224,12 @@ describe('GET /api/v1/rates (scenario 12)', () => {
 
         // Within the 60s TTL the snapshot is served from memory.
         expectMatrix(await getRates(live), liveTable, 'live', fetchedAt);
-        expect(hits).toBe(1);
+        expect(provider.hits()).toBe(1);
       } finally {
         await live.close();
       }
 
-      const down = await bootApp({ url: UNROUTABLE_URL, timeoutMs: DOWN_TIMEOUT_MS });
+      const down = await bootApp({ url: blackHole.url, timeoutMs: DOWN_TIMEOUT_MS });
       try {
         expectMatrix(await getRates(down), liveTable, 'cached', fetchedAt);
       } finally {

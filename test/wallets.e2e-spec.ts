@@ -172,7 +172,7 @@ describe('wallets (e2e)', () => {
         .send({ email: 'priced@example.com' })
         .expect(201);
       const { id } = created.body as WalletDto;
-      // No deposit endpoint until phase 4: set the balance directly.
+      // Set directly so this suite stays independent of the deposits endpoint.
       await db.query(
         `UPDATE balances SET amount = '2.5' WHERE wallet_id = $1 AND currency = 'USDx'`,
         [id],

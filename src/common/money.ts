@@ -50,6 +50,24 @@ export function toAmountString(value: Decimal): string {
   return roundDownAmount(value).toFixed(AMOUNT_SCALE);
 }
 
+/**
+ * Renders a signed ledger delta as a fixed 8 dp string. Unlike amounts, a
+ * ledger entry is never rounded: every entry is derived from values that are
+ * already at 8 dp, and silently rounding one would break the invariant that
+ * ledger sums equal balances. Zero is refused because it records nothing.
+ */
+export function toLedgerAmountString(value: Decimal): string {
+  if (value.isZero()) {
+    throw new TypeError('A ledger entry amount must be non-zero');
+  }
+  if (value.decimalPlaces() > AMOUNT_SCALE) {
+    throw new TypeError(
+      `A ledger entry amount must have at most ${AMOUNT_SCALE} dp: ${value.toString()}`,
+    );
+  }
+  return value.toFixed(AMOUNT_SCALE);
+}
+
 /** Scale of every rate the API stores or exposes: `numeric(38,18)`. */
 export const RATE_SCALE = 18;
 
@@ -61,4 +79,14 @@ export const RATE_SCALE = 18;
  */
 export function toRateString(value: Decimal): string {
   return value.toDecimalPlaces(RATE_SCALE, Decimal.ROUND_HALF_UP).toFixed(RATE_SCALE);
+}
+
+/** Any non-negative decimal with at most 18 dp: what a stored `numeric(38,18)` rate reads back as. */
+const STORED_RATE_PATTERN = /^[0-9]+(\.[0-9]{1,18})?$/;
+
+export function parseRate(value: string): Decimal {
+  if (typeof value !== 'string' || !STORED_RATE_PATTERN.test(value)) {
+    throw new TypeError(`Invalid rate string: ${JSON.stringify(value)}`);
+  }
+  return new Decimal(value);
 }

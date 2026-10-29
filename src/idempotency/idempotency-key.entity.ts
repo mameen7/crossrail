@@ -21,9 +21,9 @@ export class IdempotencyKey {
   @Column({ name: 'response_status', type: 'int', nullable: true })
   responseStatus!: number | null;
 
-  /** NULL while in flight. */
+  /** The response DTO as stored; NULL only while the inserting transaction is open. */
   @Column({ name: 'response_body', type: 'jsonb', nullable: true })
-  responseBody!: unknown;
+  responseBody!: object | null;
 
   @Column({ name: 'transaction_id', type: 'uuid', nullable: true })
   transactionId!: string | null;
