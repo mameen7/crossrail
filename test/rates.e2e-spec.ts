@@ -1,15 +1,13 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/app.setup';
 import { RatesDto } from '../src/fx/dto/rates.dto';
 import { FALLBACK_RATES, FALLBACK_RATES_AS_OF } from '../src/fx/fallback-rates';
 import { UsdRateTable } from '../src/fx/fiat';
 import { allPairRates } from '../src/fx/pricing';
 import { WalletBalancesDto, WalletDto } from '../src/wallets/dto/wallet.dto';
+import { bootApp } from './app';
 import { truncateAll } from './db';
 import { FxStub, startBlackHole, startFxProvider } from './fx-stub';
 
@@ -29,16 +27,6 @@ const CACHED_AT = '2026-10-28T09:00:00.000Z';
 const LIVE_BODY =
   '{"result":"success","base_code":"USD","rates":' +
   '{"USD":1,"EUR":0.85,"NGN":1490.123456789012345678,"GHS":11.5,"XAF":557.56,"JPY":150}}';
-
-async function bootApp(fx: { url: string; timeoutMs: number }): Promise<INestApplication<App>> {
-  process.env.FX_PROVIDER_URL = fx.url;
-  process.env.FX_TIMEOUT_MS = String(fx.timeoutMs);
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
-  configureApp(app);
-  await app.init();
-  return app;
-}
 
 async function insertFxRows(
   db: DataSource,

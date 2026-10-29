@@ -96,6 +96,30 @@ export class ApiError extends HttpException {
     );
   }
 
+  static sameCurrencySwap(currency: string): ApiError {
+    return new ApiError(
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      'SAME_CURRENCY_SWAP',
+      `Cannot swap ${currency} to itself`,
+      { currency },
+    );
+  }
+
+  /** `amount` is an 8 dp amount string and `fx_rate` an 18 dp rate string. */
+  static amountTooSmall(details: {
+    from_currency: string;
+    to_currency: string;
+    amount: string;
+    fx_rate: string;
+  }): ApiError {
+    return new ApiError(
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      'AMOUNT_TOO_SMALL',
+      `${details.amount} ${details.from_currency} converts to less than 0.00000001 ${details.to_currency}`,
+      details,
+    );
+  }
+
   /** The one 400 in the API. */
   static idempotencyKeyRequired(): ApiError {
     return new ApiError(

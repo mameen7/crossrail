@@ -40,3 +40,28 @@ export async function ledgerMismatches(db: DataSource): Promise<LedgerMismatch[]
 export async function assertLedgerMatchesBalances(db: DataSource): Promise<void> {
   expect(await ledgerMismatches(db)).toEqual([]);
 }
+
+/**
+ * Polls pg_stat_activity until `n` other backends on this database are
+ * waiting on a lock. Same role, so their rows are visible. Fails loudly after
+ * 5s so a test that never produced the overlap cannot pass by accident.
+ */
+export async function waitForLockWaiters(db: DataSource, n: number): Promise<void> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const [row] = await db.query<{ waiting: number }[]>(`
+      SELECT count(*)::int AS waiting
+        FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND wait_event_type = 'Lock'
+         AND pid <> pg_backend_pid()
+    `);
+    if ((row?.waiting ?? 0) >= n) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`Expected ${n} backends blocked on a lock; saw ${row?.waiting ?? 0}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
