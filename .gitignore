@@ -22,3 +22,14 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# OS files
+.DS_Store
+
+# test output
+/coverage
+
+# AI files
+.claude
+SPEC.md
+CLAUDE.md
