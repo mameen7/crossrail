@@ -1,7 +1,34 @@
 import Decimal from 'decimal.js';
-import { Currency } from '../common/currency';
-import { parseAmount, toAmountString } from '../common/money';
+import { CURRENCIES, Currency } from '../common/currency';
+import { parseAmount, toAmountString, toRateString } from '../common/money';
 import { FIAT_OF, UsdRateTable } from './fiat';
+
+/**
+ * Units of `to` per 1 unit of `from`, from a USD-based table:
+ * `table[fiat(to)] / table[fiat(from)]`, computed exactly and quantized to
+ * 18 dp once. This 18 dp string is the rate that gets exposed and stored, so
+ * anything derived from it is derived from exactly what the client sees.
+ */
+export function crossRate(table: UsdRateTable, from: Currency, to: Currency): string {
+  return toRateString(new Decimal(table[FIAT_OF[to]]).div(table[FIAT_OF[from]]));
+}
+
+export interface PairRate {
+  from: Currency;
+  to: Currency;
+  rate: string;
+}
+
+/** All 20 ordered pairs of distinct currencies, in canonical order. */
+export function allPairRates(table: UsdRateTable): PairRate[] {
+  return CURRENCIES.flatMap((from) =>
+    CURRENCIES.filter((to) => to !== from).map((to) => ({
+      from,
+      to,
+      rate: crossRate(table, from, to),
+    })),
+  );
+}
 
 /**
  * Exact USD value of one amount from a USD-based table:

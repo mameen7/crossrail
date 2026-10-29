@@ -1,12 +1,15 @@
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { ApiError } from '../common/api-error';
 import { CURRENCIES } from '../common/currency';
-import { FallbackRatesSource } from '../fx/fallback-rates.source';
+import { FALLBACK_SNAPSHOT } from '../fx/fallback-rates';
+import { RatesSource } from '../fx/rates-source';
 import { Balance } from './balance.entity';
 import { Wallet } from './wallet.entity';
 import { uniqueViolationField, WalletsService } from './wallets.service';
 
 const CREATED_AT = new Date('2026-10-29T12:00:00.000Z');
+
+const fallbackRates: RatesSource = { getSnapshot: () => Promise.resolve(FALLBACK_SNAPSHOT) };
 
 const pgError = (code: string, constraint?: string): QueryFailedError =>
   new QueryFailedError('INSERT', [], Object.assign(new Error('driver'), { code, constraint }));
@@ -37,7 +40,7 @@ describe('WalletsService', () => {
       { transaction } as unknown as DataSource,
       { findOneBy } as unknown as Repository<Wallet>,
       { findBy } as unknown as Repository<Balance>,
-      new FallbackRatesSource(),
+      fallbackRates,
     );
   });
 

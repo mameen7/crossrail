@@ -1,5 +1,11 @@
 import Decimal from 'decimal.js';
-import { isAmountString, parseAmount, roundDownAmount, toAmountString } from './money';
+import {
+  isAmountString,
+  parseAmount,
+  roundDownAmount,
+  toAmountString,
+  toRateString,
+} from './money';
 
 describe('money', () => {
   describe('isAmountString (request format)', () => {
@@ -73,6 +79,20 @@ describe('money', () => {
       );
       // 67510000000000000 - 0.87654322 * 0.0006751 = 67509999999999999.999408245672178
       expect(toAmountString(product)).toBe('67509999999999999.99940824');
+    });
+  });
+
+  describe('toRateString', () => {
+    it('quantizes to exactly 18 dp, half-up like a numeric(38,18) cast', () => {
+      // 1/1480 = 0.000675675675675675|675...
+      expect(toRateString(new Decimal(1).div(1480))).toBe('0.000675675675675676');
+      expect(toRateString(new Decimal('0.0000000000000000004'))).toBe('0.000000000000000000');
+      expect(toRateString(new Decimal('0.0000000000000000005'))).toBe('0.000000000000000001');
+      expect(toRateString(new Decimal('1480'))).toBe('1480.000000000000000000');
+    });
+
+    it('renders exponent input in fixed-point notation', () => {
+      expect(toRateString(new Decimal('1e-7'))).toBe('0.000000100000000000');
     });
   });
 });

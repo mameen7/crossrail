@@ -1,14 +1,19 @@
 import { Module } from '@nestjs/common';
-import { FallbackRatesSource } from './fallback-rates.source';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { FxProvider } from './fx-provider';
+import { FxRate } from './fx-rate.entity';
+import { FxService } from './fx.service';
+import { RatesController } from './rates.controller';
 import { RatesSource } from './rates-source';
 
 /**
- * Phase 2 binding: every rate consumer injects `RatesSource` and gets the
- * in-code fallback table. Phase 3 replaces the provider here with the live →
- * cached → fallback chain; callers do not change.
+ * Rate consumers inject `RatesSource`; it resolves to the one `FxService`
+ * instance, so every consumer shares its in-memory snapshot.
  */
 @Module({
-  providers: [{ provide: RatesSource, useClass: FallbackRatesSource }],
+  imports: [TypeOrmModule.forFeature([FxRate])],
+  controllers: [RatesController],
+  providers: [FxProvider, FxService, { provide: RatesSource, useExisting: FxService }],
   exports: [RatesSource],
 })
 export class FxModule {}

@@ -1,4 +1,5 @@
 import { UsdRateTable } from './fiat';
+import { RateSnapshot } from './rates-source';
 
 /**
  * Last-resort pricing tier: approximate late-2026 mid-rates as a USD-based
@@ -24,3 +25,10 @@ export const FALLBACK_RATES: UsdRateTable = {
  * the hardcoded table for a recent fetch.
  */
 export const FALLBACK_RATES_AS_OF = new Date('2026-10-29T00:00:00.000Z');
+
+/** The last tier of the chain, as the snapshot every consumer receives. */
+export const FALLBACK_SNAPSHOT: RateSnapshot = {
+  table: FALLBACK_RATES,
+  source: 'fallback',
+  fetchedAt: FALLBACK_RATES_AS_OF,
+};

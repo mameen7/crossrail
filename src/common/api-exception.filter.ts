@@ -18,7 +18,8 @@ export interface ErrorResponse {
  *   "422 for everything else" (400 is reserved for `IDEMPOTENCY_KEY_REQUIRED`).
  *   So the codes the API emits are exactly `ERROR_CODES`.
  * - Anything else: 500 `INTERNAL_ERROR` with a generic message, never the
- *   original text.
+ *   original text or stack (SPEC.md: unhandled exceptions only). The stack
+ *   goes to the server log instead.
  */
 export function toErrorResponse(exception: unknown): ErrorResponse {
   if (exception instanceof ApiError) {

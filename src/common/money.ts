@@ -49,3 +49,16 @@ export function roundDownAmount(value: Decimal): Decimal {
 export function toAmountString(value: Decimal): string {
   return roundDownAmount(value).toFixed(AMOUNT_SCALE);
 }
+
+/** Scale of every rate the API stores or exposes: `numeric(38,18)`. */
+export const RATE_SCALE = 18;
+
+/**
+ * Quantizes a rate to 18 dp, half-up, and renders it fixed-point. Half-up is
+ * what Postgres applies when it casts to `numeric(38,18)`, so a rate quantized
+ * here is stored unchanged. Rates are prices, not balances: the round-down
+ * rule applies to the amounts later derived from them, not to the rate.
+ */
+export function toRateString(value: Decimal): string {
+  return value.toDecimalPlaces(RATE_SCALE, Decimal.ROUND_HALF_UP).toFixed(RATE_SCALE);
+}

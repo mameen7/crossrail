@@ -1,15 +1,17 @@
 import {
+  ArgumentsHost,
   BadRequestException,
   HttpException,
   HttpStatus,
   InternalServerErrorException,
+  Logger,
   MethodNotAllowedException,
   NotFoundException,
   PayloadTooLargeException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ApiError, ERROR_CODES } from './api-error';
-import { toErrorResponse } from './api-exception.filter';
+import { ApiExceptionFilter, toErrorResponse } from './api-exception.filter';
 
 describe('toErrorResponse', () => {
   it('renders an ApiError with its code, message and details', () => {
@@ -80,5 +82,30 @@ describe('toErrorResponse', () => {
         body: { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       });
     }
+  });
+});
+
+describe('ApiExceptionFilter', () => {
+  it('writes a raw thrown Error as 500 INTERNAL_ERROR in the envelope, with no message or stack', () => {
+    const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const json = jest.fn();
+    const status = jest.fn(() => ({ json }));
+    const host = {
+      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+    } as unknown as ArgumentsHost;
+    const raw = new Error('relation "secret_table" does not exist');
+
+    new ApiExceptionFilter().catch(raw, host);
+
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+    });
+    const written = JSON.stringify(json.mock.calls[0]);
+    expect(written).not.toContain('secret_table');
+    expect(written).not.toContain('at ');
+    // The stack is kept, but only in the server log.
+    expect(logError).toHaveBeenCalledWith('Unhandled exception', raw.stack);
+    logError.mockRestore();
   });
 });

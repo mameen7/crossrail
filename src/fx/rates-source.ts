@@ -15,8 +15,8 @@ export interface RateSnapshot {
 
 /**
  * Where callers get rates from. Declared as an abstract class so it doubles as
- * the Nest injection token. Phase 2 binds it to `FallbackRatesSource`; Phase 3
- * swaps in the live → cached → fallback implementation without touching callers.
+ * the Nest injection token. `FxModule` binds it to `FxService`, the
+ * live → cached → fallback chain.
  */
 export abstract class RatesSource {
   abstract getSnapshot(): Promise<RateSnapshot>;

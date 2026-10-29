@@ -1,7 +1,7 @@
 import Decimal from 'decimal.js';
 import { CURRENCIES } from '../common/currency';
 import { FALLBACK_RATES } from './fallback-rates';
-import { FIAT_CODES, FIAT_OF } from './fiat';
+import { FIAT_CODES, FIAT_OF, parseUsdRateTable } from './fiat';
 
 describe('FALLBACK_RATES', () => {
   it('covers the fiat of all five supported currencies and nothing else', () => {
@@ -24,5 +24,9 @@ describe('FALLBACK_RATES', () => {
 
   it('is USD-based: USD is exactly 1', () => {
     expect(new Decimal(FALLBACK_RATES.USD).equals(1)).toBe(true);
+  });
+
+  it('passes the same validation as a live or cached table', () => {
+    expect(() => parseUsdRateTable(FALLBACK_RATES)).not.toThrow();
   });
 });

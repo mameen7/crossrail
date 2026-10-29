@@ -75,8 +75,8 @@ export class WalletsService {
     if (wallet === null) {
       throw ApiError.walletNotFound(id);
     }
-    // Independent reads; once phase 3 binds a live provider (3s timeout) its
-    // latency overlaps the balance query instead of adding to it.
+    // Independent reads: a live rate fetch (up to the 3s timeout) overlaps the
+    // balance query instead of adding to it.
     const [rows, snapshot] = await Promise.all([
       this.balances.findBy({ walletId: id }),
       this.rates.getSnapshot(),

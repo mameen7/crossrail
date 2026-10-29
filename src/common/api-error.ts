@@ -1,6 +1,9 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 
-/** Business error codes from SPEC.md, plus the two generic ones the filter emits. */
+/**
+ * Error codes from SPEC.md (`INTERNAL_ERROR` is the 500 for unhandled
+ * exceptions), plus `NOT_FOUND`, which the filter emits for unknown routes.
+ */
 export const ERROR_CODES = [
   'VALIDATION_ERROR',
   'WALLET_EXISTS',
