@@ -2,9 +2,11 @@
 
 Crossrail is a sandbox API for stablecoin cross-border payments. A client creates a wallet keyed by email or phone, deposits simulated stablecoins (`cNGN`, `cGHS`, `cXAF`, `USDx`, `EURx`), swaps between them at live FX rates, and sends money to another wallet with the currency conversion done along the way. Every movement is recorded in a double-entry ledger. The work went into the parts that are hard to get right with money: amounts never pass through a float, a retried request is never processed twice, parallel requests cannot drive a balance negative, and an FX provider outage degrades pricing instead of failing requests. The name means payment rails that cross borders. I picked it for that meaning and don't claim to have coined it.
 
+**Why it is built this way:** see [DESIGN.md](DESIGN.md) for the design decisions and the reasoning behind them.
+
 ## Contents
 
-1. [Tech stack and why](#tech-stack-and-why)
+1. [Tech stack](#tech-stack)
 2. [Setup and run](#setup-and-run)
 3. [Endpoint walkthrough](#endpoint-walkthrough)
 4. [Data model](#data-model)
@@ -13,28 +15,9 @@ Crossrail is a sandbox API for stablecoin cross-border payments. A client create
 7. [Assumptions and limitations](#assumptions-and-limitations)
 8. [With more time](#with-more-time)
 
-## Tech stack and why
+## Tech stack
 
-| Area | Choice | Why |
-| --- | --- | --- |
-| Runtime | Node.js 24, 24.9 or later (`.nvmrc`) | Nest 12 ships ESM-only and runs a CommonJS app through `require(esm)`. Jest supports `require(esm)` only from Node 24.9, so that's the floor |
-| Language | TypeScript, `strict` plus `noUncheckedIndexedAccess` | Type errors surface at compile time, and an indexed lookup can't silently produce `undefined` |
-| Framework | NestJS 12, CommonJS output | Dependency injection and feature modules keep the code reviewable. `class-validator` pipes validate requests, and `@nestjs/swagger` generates the OpenAPI spec from decorators. The brief requires ESLint, and Nest's CommonJS template is the one that works with both Jest and ESLint |
-| Database | PostgreSQL 16 | See below |
-| ORM | TypeORM via `@nestjs/typeorm` | Native Nest integration, hand-written migrations and `pessimistic_write` locks. Decimal columns map to strings, never to JS numbers |
-| Money math | `decimal.js` | Arbitrary-precision decimal arithmetic. JS `number` is never used for an amount |
-| Tests | Jest and Supertest | E2e specs run against the real Nest app and a real Postgres |
-| Tooling | Yarn 1, ESLint, Prettier | Required by the brief |
-| Cache or queue | None | See below |
-
-**Why Postgres.** Every invariant this API must keep can be stated to the database and checked by it. ACID transactions make a swap's debit and credit land together or not at all. `SELECT ... FOR UPDATE` row locks serialize concurrent writers on the same balance. `NUMERIC(38,8)` stores amounts exactly. `CHECK (amount >= 0)`, the one-wallet-per-email and one-wallet-per-phone unique constraints, and the idempotency key's primary key are enforced by the database itself. With a document store, each of these would become application code that has to be correct under concurrency on its own.
-
-**Why no Redis and no queue.** Every operation in scope completes synchronously within one request. Postgres already provides what Redis would usually be added for:
-- Locking: `FOR UPDATE` row locks.
-- Idempotency storage: the key row commits in the same transaction as the money movement. That is a stronger guarantee than a Redis key, which can never commit atomically with a Postgres write.
-- Rate persistence: the `fx_rates` table.
-
-Async settlement would be the point to add a transactional outbox plus a queue (see [With more time](#with-more-time)).
+Node.js 24.9+ (`.nvmrc`), TypeScript (`strict` plus `noUncheckedIndexedAccess`), NestJS 12 with CommonJS output, PostgreSQL 16, TypeORM, `decimal.js`, Jest and Supertest, Yarn 1, ESLint and Prettier. No Redis and no queue: Postgres provides the locking, the idempotency store and rate persistence. The reasoning behind each choice is in [DESIGN.md: Stack decisions](DESIGN.md#stack-decisions).
 
 ## Setup and run
 
@@ -502,68 +485,22 @@ HTTP/1.1 404 Not Found
 
 ## Data model
 
-Six tables, all created by migrations in [`src/database/migrations`](src/database/migrations).
-
-| Table | Role | Key constraints |
-| --- | --- | --- |
-| `wallets` | One per email or phone | Unique `email` and unique `phone`. `CHECK (email IS NOT NULL OR phone IS NOT NULL)` |
-| `balances` | One row per (wallet, currency), created eagerly at 0 for all five currencies. These are the rows that get locked | PK `(wallet_id, currency)`, FK to `wallets`, `amount numeric(38,8) CHECK (amount >= 0)`, currency in the supported set |
-| `transactions` | One row per business operation: deposit, swap or transfer | `source_amount > 0` and `destination_amount > 0`. Party shape: deposits and swaps set only `wallet_id`, transfers set only `sender_wallet_id` and `receiver_wallet_id`, and the sender differs from the receiver. `fx_rate numeric(38,18)`. Records `rate_source` (`live`, `cached`, `fallback` or `none`) |
-| `ledger_entries` | Signed movements: negative is a debit, positive is a credit | FK to `transactions`, `amount numeric(38,8)` |
-| `idempotency_keys` | One row per successful keyed mutation, holding its stored response | PK `(key, endpoint)`, `request_hash`, `response_status`, `response_body jsonb` |
-| `fx_rates` | Persisted copy of the last live USD-based table | PK `(base_currency, quote_currency)`. Only live fetches are written here |
-
-**The ledger is the audit trail, and `balances` is its lockable projection.** A deposit writes one credit. A swap writes a debit and a credit on the same wallet. A transfer writes a debit on the sender and a credit on the receiver. Each balance update happens in the same database transaction as the ledger entries that justify it, so this invariant always holds:
+Six tables, all created by migrations in [`src/database/migrations`](src/database/migrations): `wallets`, `balances`, `transactions`, `ledger_entries`, `idempotency_keys` and `fx_rates`. The ledger is the audit trail, and `balances` is its lockable projection: one row per (wallet, currency), created at 0 for all five currencies when the wallet is. Each balance update commits with the ledger entries that justify it, so this invariant always holds, and the e2e suites that move money check it after every test:
 
 ```
 SUM(ledger_entries.amount) GROUP BY (wallet_id, currency)  =  balances.amount
 ```
 
-The e2e suites that move money (deposits, swaps, transfers, history) check it after every test. The check uses a `FULL JOIN`, so it also catches a ledger sum with no balance row and a non-zero balance with no ledger rows.
-
-**There are deliberately no foreign keys from `transactions` or `ledger_entries` to `wallets`.** Wallet existence is already enforced at write time: every operation locks the wallet's balance rows, which do reference `wallets`, and a missing row is a 404 before anything is written. The ledger records history and doesn't depend on the wallets table. Balances are what reference wallets.
+Full schema, constraints and the reasoning behind them: [DESIGN.md: Data model](DESIGN.md#data-model).
 
 ## The four hard problems
 
-### Money precision
+Each is covered in depth in DESIGN.md; in brief:
 
-- Amounts are strings end to end: decimal strings in JSON, `numeric(38,8)` in Postgres, `decimal.js` in code. There is no `parseFloat`, no `Number()` and no float arithmetic on amounts. Even the FX provider's JSON is parsed with a reviver that keeps each rate's source text, so no rate ever passes through a float.
-- Request amounts must match `^[0-9]{1,20}(\.[0-9]{1,8})?$` and be greater than zero. A ninth decimal place is a 422, not a silent rounding.
-- `decimal.js` runs at precision 80, because its default of 20 significant digits can't multiply a 20-digit amount by an 18 dp rate exactly.
-- Amounts are rounded **down** to 8 dp, in one utility ([`src/common/money.ts`](src/common/money.ts)) and nowhere else.
-- Rates are quantized **half-up** to 18 dp. That is what Postgres does when it casts to `numeric(38,18)`, so a rate quantized in code is stored unchanged.
-- The destination amount is derived from the **stored rate string**: `round_down(source × fx_rate, 8 dp)`. It is never computed from the unrounded cross rate, so the recorded rate and the recorded amounts always agree. A unit test pins the case where the two methods differ: converting 100,000,000,000 cNGN to USDx gives `67567567.56756760` from the stored rate but `67567567.56756756` from direct division.
-- A conversion that rounds to zero is a 422 `AMOUNT_TOO_SMALL`, raised before any balance or ledger write.
-
-### Idempotency
-
-Deposits, swaps and transfers require an `Idempotency-Key` header of up to 255 characters.
-
-- **Single transaction.** The first statement of the operation's transaction is `INSERT INTO idempotency_keys ... ON CONFLICT DO NOTHING`. The operation then runs in the same transaction, and its response is written onto the key row before commit. A key therefore only ever becomes visible together with its effects. There is no in-progress state, and a key can never be left stuck by a crash.
-- **At-most-once success.** A failed attempt (insufficient funds, unknown wallet, a crash) rolls back everything, including the key row, so the key isn't consumed and a later retry with the same key can still succeed. What is guaranteed is that a request succeeds at most once, not that every attempt is recorded.
-- **Concurrent duplicates.** A second request with the same key blocks on the unique index until the first transaction ends. It then either sees the committed row and replays it, or, if the first rolled back, inserts its own row and proceeds. Tested for deposits, swaps and transfers.
-- **What the hash covers.** The hash is computed over the *validated* request: the whitelisted DTO (unknown properties stripped), lowercased wallet ids, path params, and for transfers the defaulted `destination_currency`. Two spellings of the same request therefore replay. Amounts are hashed as sent, so `"10.5"` and `"10.50"` are different requests. The same key with a different request is 422 `IDEMPOTENCY_KEY_REUSED`.
-- **Replays match in content, not bytes.** The stored response lives in `jsonb`, which normalizes key order (visible in the walkthrough above). A replay carries `Idempotent-Replay: true` and the original status code.
-- **Replays still take a rate snapshot.** Swaps and cross-currency transfers take their snapshot *before* the transaction opens, so no network I/O happens while balance rows are locked. That also means a replay goes through the FX chain before it reaches the key lookup. The cost is bounded: snapshots are memoized (60 s when live, 10 s when degraded) and concurrent callers share one in-flight resolution, so an outage costs at most one provider timeout per 10 s. The known optimization is to peek at the key row before pricing. See [With more time](#with-more-time).
-- **Keys are global.** With no auth, two unrelated clients that pick the same key on the same endpoint collide. Listed under [limitations](#assumptions-and-limitations).
-
-### Concurrency
-
-- Each mutation is **one Postgres transaction** under the default READ COMMITTED isolation.
-- Balance rows are locked with `SELECT ... FOR UPDATE` **before** they're read, always in globally sorted `(wallet_id, currency)` order. Two transfers that cross (A→B and B→A at once) take their locks in the same order and so can't deadlock. An e2e test forces the overlap by waiting until Postgres reports a backend blocked on the lock. A second test runs ten interleaved crossing transfers and checks that money is conserved.
-- The code verifies funds after locking and before writing. Insufficient funds rolls back the whole transaction with a 422, and nothing partial persists.
-- `CHECK (amount >= 0)` on `balances` is a last-resort backstop. Correct code never trips it.
-- **Tested:** ten parallel 150 cNGN swaps against a balance of 1000 cNGN. Exactly `floor(1000 / 150) = 6` succeed and 4 return 422 `INSUFFICIENT_FUNDS`. The balance ends at exactly 100, nothing goes negative, and the ledger invariant holds.
-
-### FX failure
-
-- **Live provider:** `open.er-api.com/v6/latest/USD`, which is free and needs no key. Each stablecoin is priced 1:1 against its fiat currency, and any cross rate comes from the one USD table: `rate(A→B) = usd[fiat(B)] / usd[fiat(A)]`. Swapping in another provider means changing one file.
-- **Fallback chain:** live → cached (the `fx_rates` table) → `FALLBACK_RATES`, a constant in code holding approximate late-2026 rates.
-  - Every successful live fetch writes the whole table to `fx_rates` in one transaction.
-  - The fallback constant is never stored in `fx_rates`, so no write can corrupt the last tier.
-- **Timeouts:** the provider call has a 3 s timeout covering the whole exchange, from connect to body. The cached tier's database read has a 1 s timeout, so a database that isn't responding can't block a fallback that needs no database.
-- **TTLs:** a live snapshot is memoized for 60 s. A cached or fallback snapshot is memoized for only 10 s, so a recovered provider is back in use within seconds, while an outage costs one timeout per 10 s rather than one per request.
-- **Result:** endpoints that need rates (`/rates`, wallet totals, swaps, cross-currency transfers) never return 5xx because the provider is down. Rates are consumed as one snapshot, so every pair and every transaction carries exactly one source, and each transaction records its `rate_source` permanently. E2e tests cover a provider that hangs (to exercise the timeout), an empty or incomplete `fx_rates` table, and a provider that serves live rates, then goes down, after which the cached rows are served.
+- **[Money precision](DESIGN.md#money-precision).** Amounts are decimal strings in JSON, `numeric(38,8)` in Postgres and `decimal.js` in code, never a float. They round **down** to 8 dp in one utility ([`src/common/money.ts`](src/common/money.ts)). The destination amount is derived from the stored 18 dp rate, so the recorded rate and the recorded amounts always agree. A conversion that rounds to zero is a 422 `AMOUNT_TOO_SMALL`.
+- **[Idempotency](DESIGN.md#idempotency).** Deposits, swaps and transfers require an `Idempotency-Key` header (up to 255 characters). The key row is inserted at the start of the operation's own transaction and its response written at the end, so a key becomes visible only together with its effects. A failure rolls the key back with everything else: a request succeeds at most once, and a failed attempt leaves the key usable. Replays return the stored response with `Idempotent-Replay: true`.
+- **[Concurrency](DESIGN.md#concurrency).** Every mutation is one Postgres transaction that locks its balance rows with `SELECT ... FOR UPDATE` in sorted `(wallet_id, currency)` order, then checks funds before writing. Crossing transfers can't deadlock, and ten parallel swaps against a balance that covers six yield exactly six successes.
+- **[FX failure](DESIGN.md#fx-rates-and-failure-handling).** Rates come from `open.er-api.com` with a 3 s timeout and fall back live → cached (`fx_rates`) → the in-code `FALLBACK_RATES`. Live snapshots are held for 60 s and degraded ones for 10 s. A provider outage never surfaces as a 5xx, and every transaction records the `rate_source` it was priced from.
 
 ## Error handling
 
@@ -583,48 +520,24 @@ Every error, including unknown routes, malformed JSON and unhandled exceptions, 
 
 `VALIDATION_ERROR` details are a list of `{ field, messages }`. Oversized and malformed JSON bodies are also 422 `VALIDATION_ERROR`, not a bare 413 or 400.
 
-**Precedence rules**, applied in this order:
-
-1. **A missing `Idempotency-Key` is checked first.** It is a 400 even when the body is also invalid.
-2. **Request validity beats resource existence.** A request that is invalid on its face fails the same way regardless of database state. For example, an unsupported currency on an unknown wallet is 422, not 404:
-   ```sh
-   curl -s -X POST $API/wallets/00000000-0000-4000-8000-000000000000/deposits \
-     -H 'content-type: application/json' -H 'Idempotency-Key: k1' -d '{"currency":"BTC","amount":"1"}'
-   ```
-   ```json
-   HTTP/1.1 422 Unprocessable Entity
-
-   { "error": { "code": "UNSUPPORTED_CURRENCY", "message": "Unsupported currency \"BTC\"", "details": { "field": "currency", "value": "BTC" } } }
-   ```
-   Among request checks, currency support comes before the business rules on currencies and parties (`SAME_CURRENCY_SWAP`, `SELF_TRANSFER`).
-3. **A replay beats checks that depend on current state.** A committed request replays its stored response even if it would fail today. The `AMOUNT_TOO_SMALL` check runs inside the transaction, after the key insert, so a swap that committed when it converted to a non-zero amount still replays after rates move enough to round it to zero.
-
-**Error details are keyed by code, not by endpoint.** Each code always carries the same `details` shape, so a client can switch on `error.code` alone. For example, `AMOUNT_TOO_SMALL` always carries `{ from_currency, to_currency, amount, fx_rate }` describing the conversion, on swaps and transfers alike.
+When a request fails more than one check, a missing `Idempotency-Key` wins, then request validity beats resource existence (an unsupported currency on an unknown wallet is 422, not 404), and a replay of a committed request beats checks that depend on current state. Each code always carries the same `details` shape, whichever endpoint returns it. The reasoning is in [DESIGN.md: Error design](DESIGN.md#error-design).
 
 ## Assumptions and limitations
 
-These are deliberate cuts, not oversights:
+Deliberate cuts, each explained in [DESIGN.md: Out of scope](DESIGN.md#out-of-scope):
 
-- **No authentication or KYC.** Anyone who knows a wallet id can move its money. The brief requires only unique email or phone.
-- **Mid-rate pricing with no fees or spread.** Every conversion uses the mid rate.
-- **Nothing is async.** There are no webhooks, no Redis and no queues. Every operation settles within its request.
-- **A single Postgres is the source of truth.** Idempotency and locking both assume one database. Multi-region and multi-primary setups are out of scope.
-- **Phone normalization only strips spaces and dashes.** `+2348012345678` and `2348012345678` are two different wallets. A real system would parse to E.164.
-- **Destination overflow isn't enforced in code.** A request amount has at most 20 integer digits, and `numeric(38,8)` holds 30, so a conversion overflows only at a rate above about 10^10. No realistic rate between these five currencies comes close, but nothing in code rejects it. Postgres would refuse the write and the request would fail as a 500.
-- **Idempotency keys are global.** With no client identity, a key is scoped only by endpoint, so two clients that choose the same key collide: the second gets `IDEMPOTENCY_KEY_REUSED` or, if its request is identical, the first client's response. With auth, keys would be scoped per client.
-- **History cursors aren't bound to their query.** A `next_cursor` encodes a bare `(created_at, id)` position. Reusing it on another wallet or with different filters returns 200 from that position, not 422. Binding the scope into the cursor was tried and reverted because it cost more than it was worth here.
-- **No rate limiting, soft deletes or admin endpoints.**
+- No authentication or KYC, so idempotency keys are global rather than per client.
+- Mid-rate pricing with no fees or spread.
+- Nothing is async: no webhooks, Redis or queues.
+- A single Postgres is the source of truth.
+- Phone normalization only strips spaces and dashes: `+2348012345678` and `2348012345678` are two wallets.
+- Destination overflow past `numeric(38,8)` isn't rejected in code; no realistic rate comes close.
+- History cursors aren't bound to the wallet or filters that produced them.
+- No rate limiting, soft deletes or admin endpoints.
 
 ## With more time
 
-- API-key authentication, with idempotency keys scoped per client.
-- A fee engine: spreads and per-corridor fees, recorded as their own ledger entries.
-- A transactional outbox plus a queue to simulate asynchronous settlement (`pending` → `completed`; the `status` column is already there).
-- A second FX provider before the cached tier.
-- A scheduled reconciliation job asserting the ledger invariant in production, not just in tests.
-- A replay fast path that peeks at the key row before pricing, so a replay never touches the FX chain.
-- Property-based tests for the money math, such as round-trip and monotonicity properties of `convert`.
-- Rate limiting.
+See [DESIGN.md: With more time](DESIGN.md#with-more-time).
 
 ## License
 
