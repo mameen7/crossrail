@@ -8,6 +8,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { ApiErrorResponseDto } from '../common/api-error.dto';
+import { AMOUNT_TOO_SMALL_422 } from '../fx/pricing';
 import { UuidPipe } from '../common/uuid.pipe';
 import { IdempotencyReq } from '../idempotency/idempotency.interceptor';
 import { IdempotencyRequest, IdempotentResponse } from '../idempotency/idempotency.service';
@@ -49,9 +50,9 @@ export class SwapsController {
     description:
       'UNSUPPORTED_CURRENCY: from_currency or to_currency is not one of the five stablecoins; ' +
       'SAME_CURRENCY_SWAP: from_currency equals to_currency; ' +
-      'AMOUNT_TOO_SMALL: the converted amount rounds to zero at 8 dp; ' +
+      AMOUNT_TOO_SMALL_422 +
       'INSUFFICIENT_FUNDS: the from_currency balance is below amount; ' +
-      'VALIDATION_ERROR: id is not a UUID, a currency is missing, or amount is not a positive decimal string with at most 8 dp; ' +
+      'VALIDATION_ERROR: id is not a UUID, a currency is missing, empty or not a string, or amount is not a positive decimal string with at most 8 dp; ' +
       IDEMPOTENCY_422_CODES,
   })
   swap(

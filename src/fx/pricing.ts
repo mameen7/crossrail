@@ -1,7 +1,15 @@
 import Decimal from 'decimal.js';
+import { ApiError } from '../common/api-error';
 import { CURRENCIES, Currency } from '../common/currency';
-import { parseAmount, toAmountString, toRateString } from '../common/money';
+import {
+  parseAmount,
+  parseRate,
+  roundDownAmount,
+  toAmountString,
+  toRateString,
+} from '../common/money';
 import { FIAT_OF, UsdRateTable } from './fiat';
+import { RateSnapshot } from './rates-source';
 
 /**
  * Units of `to` per 1 unit of `from`, from a USD-based table:
@@ -12,6 +20,63 @@ import { FIAT_OF, UsdRateTable } from './fiat';
 export function crossRate(table: UsdRateTable, from: Currency, to: Currency): string {
   return toRateString(new Decimal(table[FIAT_OF[to]]).div(table[FIAT_OF[from]]));
 }
+
+/** A priced conversion: the rate to store and the amount it yields. */
+export interface Conversion {
+  /** 18 dp, exactly as stored in `transactions.fx_rate`. */
+  readonly fxRate: string;
+  /** round_down(source × fxRate, 8 dp); may be zero, see `assertNonZeroDestination`. */
+  readonly destination: Decimal;
+}
+
+/**
+ * The one pricing rule for every converting operation (swaps and
+ * cross-currency transfers): quantize the cross rate to 18 dp first, then
+ * derive the destination from that stored rate string, so the recorded rate
+ * and the recorded amounts can never disagree in the last digit. The source
+ * of the price is the snapshot's; the caller records `snapshot.source`.
+ */
+export function convert(
+  source: Decimal,
+  from: Currency,
+  to: Currency,
+  snapshot: RateSnapshot,
+): Conversion {
+  const fxRate = crossRate(snapshot.table, from, to);
+  return { fxRate, destination: roundDownAmount(source.times(parseRate(fxRate))) };
+}
+
+/**
+ * 422 `AMOUNT_TOO_SMALL` when a conversion rounds to zero at 8 dp. Callers
+ * run it inside the idempotent transaction, after the key insert and before
+ * any ledger write, so a replay of a committed operation wins over today's
+ * rate. The details are keyed by the error code, not by the endpoint: they
+ * describe the conversion (`from_currency`, `to_currency`, `amount`,
+ * `fx_rate`), so swaps and transfers report it in one shape.
+ */
+export function assertNonZeroDestination(
+  source: Decimal,
+  from: Currency,
+  to: Currency,
+  { fxRate, destination }: Conversion,
+): void {
+  if (destination.isZero()) {
+    throw ApiError.amountTooSmall({
+      from_currency: from,
+      to_currency: to,
+      amount: toAmountString(source),
+      fx_rate: fxRate,
+    });
+  }
+}
+
+/**
+ * OpenAPI text for the 422 above, shared by every converting endpoint so the
+ * documented details shape has one definition too.
+ */
+export const AMOUNT_TOO_SMALL_422 =
+  'AMOUNT_TOO_SMALL: the converted amount rounds to zero at 8 dp; details are ' +
+  '{ from_currency, to_currency, amount, fx_rate } describing the conversion, the same shape on every endpoint; ';
 
 export interface PairRate {
   from: Currency;

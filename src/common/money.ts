@@ -72,6 +72,13 @@ export function toLedgerAmountString(value: Decimal): string {
 export const RATE_SCALE = 18;
 
 /**
+ * The stored rate of every same-currency operation (deposits, same-currency
+ * transfers). Responses render it at 18 dp like any other rate; the stored
+ * spelling is just the literal.
+ */
+export const UNIT_RATE = '1';
+
+/**
  * Quantizes a rate to 18 dp, half-up, and renders it fixed-point. Half-up is
  * what Postgres applies when it casts to `numeric(38,18)`, so a rate quantized
  * here is stored unchanged. Rates are prices, not balances: the round-down

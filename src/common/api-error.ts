@@ -105,6 +105,15 @@ export class ApiError extends HttpException {
     );
   }
 
+  static selfTransfer(walletId: string): ApiError {
+    return new ApiError(
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      'SELF_TRANSFER',
+      `Wallet ${walletId} cannot transfer to itself`,
+      { wallet_id: walletId },
+    );
+  }
+
   /** `amount` is an 8 dp amount string and `fx_rate` an 18 dp rate string. */
   static amountTooSmall(details: {
     from_currency: string;

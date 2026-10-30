@@ -1,8 +1,8 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ApiError } from '../common/api-error';
-import { parseAmount, parseRate, roundDownAmount, toAmountString } from '../common/money';
+import { parseAmount, toAmountString } from '../common/money';
 import { requireCurrency } from '../common/require-currency';
-import { crossRate } from '../fx/pricing';
+import { assertNonZeroDestination, convert } from '../fx/pricing';
 import { RatesSource } from '../fx/rates-source';
 import {
   IdempotencyRequest,
@@ -12,7 +12,7 @@ import {
 import { hashRequest } from '../idempotency/request-hash';
 import { TransactionDto } from '../transactions/dto/transaction.dto';
 import { LedgerService } from '../transactions/ledger.service';
-import { toTransactionDto } from '../transactions/transaction.mapper';
+import { recordTransaction } from '../transactions/record-transaction';
 import { CreateSwapDto } from './dto/create-swap.dto';
 
 @Injectable()
@@ -61,23 +61,15 @@ export class SwapsService {
     const sourceString = toAmountString(source);
 
     const snapshot = await this.rates.getSnapshot();
-    const fxRate = crossRate(snapshot.table, from, to);
-    const destination = roundDownAmount(source.times(parseRate(fxRate)));
+    const conversion = convert(source, from, to, snapshot);
+    const { fxRate, destination } = conversion;
     const requestHash = hashRequest(input, { id: walletId });
 
-    return await this.idempotency.execute(request, requestHash, async (em) => {
+    return await recordTransaction(this.idempotency, this.ledger, request, requestHash, () => {
       // Only reached on a fresh key; a stored response has already been returned.
-      if (destination.isZero()) {
-        throw ApiError.amountTooSmall({
-          from_currency: from,
-          to_currency: to,
-          amount: sourceString,
-          fx_rate: fxRate,
-        });
-      }
-      const tx = await this.ledger.apply(
-        em,
-        {
+      assertNonZeroDestination(source, from, to, conversion);
+      return {
+        draft: {
           type: 'swap',
           walletId,
           senderWalletId: null,
@@ -89,13 +81,11 @@ export class SwapsService {
           fxRate,
           rateSource: snapshot.source,
         },
-        [
+        entries: [
           { walletId, currency: from, amount: source.negated() },
           { walletId, currency: to, amount: destination },
         ],
-      );
-
-      return { status: HttpStatus.CREATED, body: toTransactionDto(tx), transactionId: tx.id };
+      };
     });
   }
 }

@@ -7,6 +7,7 @@ import { HealthModule } from './health/health.module';
 import { IdempotencyModule } from './idempotency/idempotency.module';
 import { SwapsModule } from './swaps/swaps.module';
 import { TransactionsModule } from './transactions/transactions.module';
+import { TransfersModule } from './transfers/transfers.module';
 import { WalletsModule } from './wallets/wallets.module';
 
 @Module({
@@ -20,6 +21,7 @@ import { WalletsModule } from './wallets/wallets.module';
     TransactionsModule,
     DepositsModule,
     SwapsModule,
+    TransfersModule,
   ],
 })
 export class AppModule {}

@@ -2,7 +2,15 @@ import Decimal from 'decimal.js';
 import { CURRENCIES } from '../common/currency';
 import { FALLBACK_RATES } from './fallback-rates';
 import { UsdRateTable } from './fiat';
-import { allPairRates, crossRate, usdEquivalent, usdValue } from './pricing';
+import {
+  allPairRates,
+  assertNonZeroDestination,
+  convert,
+  crossRate,
+  usdEquivalent,
+  usdValue,
+} from './pricing';
+import { RateSnapshot } from './rates-source';
 
 const TABLE: UsdRateTable = {
   USD: '1',
@@ -51,6 +59,67 @@ describe('cross rates from a USD table', () => {
       for (const { rate } of allPairRates(TABLE)) {
         expect(rate).toMatch(/^[0-9]+\.[0-9]{18}$/);
       }
+    });
+  });
+});
+
+describe('converting an amount', () => {
+  const snapshot: RateSnapshot = { table: TABLE, source: 'live', fetchedAt: new Date(0) };
+
+  describe('convert', () => {
+    it('stores the 18 dp cross rate and derives the destination from that string, rounded down', () => {
+      const { fxRate, destination } = convert(
+        new Decimal('100000000000'),
+        'cNGN',
+        'USDx',
+        snapshot,
+      );
+
+      // The exact rate is 1/1480 = 0.000675675675675675|675...; at this size the
+      // quantized rate (…676) shows in the 8th decimal. The destination follows the
+      // stored rate, never the exact quotient, so the two recorded figures agree.
+      expect(fxRate).toBe('0.000675675675675676');
+      expect(fxRate).toBe(crossRate(TABLE, 'cNGN', 'USDx'));
+      expect(destination.toFixed(8)).toBe('67567567.56756760');
+      expect(new Decimal('100000000000').div(1480).toFixed(8, Decimal.ROUND_DOWN)).toBe(
+        '67567567.56756756',
+      );
+    });
+
+    it('may yield zero; rejecting that is a separate step', () => {
+      expect(
+        convert(new Decimal('0.00000001'), 'cXAF', 'USDx', snapshot).destination.isZero(),
+      ).toBe(true);
+    });
+  });
+
+  describe('assertNonZeroDestination', () => {
+    it('passes a non-zero conversion', () => {
+      const conversion = convert(new Decimal('1'), 'USDx', 'cNGN', snapshot);
+      expect(() =>
+        assertNonZeroDestination(new Decimal('1'), 'USDx', 'cNGN', conversion),
+      ).not.toThrow();
+    });
+
+    it('throws 422 AMOUNT_TOO_SMALL with details describing the conversion', () => {
+      const source = new Decimal('0.00000001');
+      const conversion = convert(source, 'cXAF', 'USDx', snapshot);
+      let thrown: unknown;
+      try {
+        assertNonZeroDestination(source, 'cXAF', 'USDx', conversion);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toMatchObject({
+        code: 'AMOUNT_TOO_SMALL',
+        status: 422,
+        details: {
+          from_currency: 'cXAF',
+          to_currency: 'USDx',
+          amount: '0.00000001',
+          fx_rate: conversion.fxRate,
+        },
+      });
     });
   });
 });
