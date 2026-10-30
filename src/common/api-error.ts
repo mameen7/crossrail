@@ -72,6 +72,15 @@ export class ApiError extends HttpException {
     return new ApiError(HttpStatus.NOT_FOUND, 'WALLET_NOT_FOUND', `Wallet ${id} not found`, { id });
   }
 
+  static transactionNotFound(id: string): ApiError {
+    return new ApiError(
+      HttpStatus.NOT_FOUND,
+      'TRANSACTION_NOT_FOUND',
+      `Transaction ${id} not found`,
+      { id },
+    );
+  }
+
   static unsupportedCurrency(field: string, value: string): ApiError {
     return new ApiError(
       HttpStatus.UNPROCESSABLE_ENTITY,

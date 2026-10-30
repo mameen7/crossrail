@@ -70,6 +70,13 @@ export class WalletsService {
     }
   }
 
+  /** 404 `WALLET_NOT_FOUND` unless the wallet exists; for modules that only need the check. */
+  async assertExists(id: string): Promise<void> {
+    if (!(await this.wallets.existsBy({ id }))) {
+      throw ApiError.walletNotFound(id);
+    }
+  }
+
   async get(id: string): Promise<WalletBalancesDto> {
     const wallet = await this.wallets.findOneBy({ id });
     if (wallet === null) {

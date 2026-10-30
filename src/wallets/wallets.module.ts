@@ -10,5 +10,6 @@ import { WalletsService } from './wallets.service';
   imports: [TypeOrmModule.forFeature([Wallet, Balance]), FxModule],
   controllers: [WalletsController],
   providers: [WalletsService],
+  exports: [WalletsService],
 })
 export class WalletsModule {}

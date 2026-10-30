@@ -20,6 +20,7 @@ describe('WalletsService', () => {
   let insert: jest.Mock;
   let findOneBy: jest.Mock;
   let findBy: jest.Mock;
+  let existsBy: jest.Mock;
   let service: WalletsService;
 
   beforeEach(() => {
@@ -35,10 +36,11 @@ describe('WalletsService', () => {
     transaction = jest.fn((fn: (em: EntityManager) => Promise<unknown>) => fn(em));
     findOneBy = jest.fn();
     findBy = jest.fn();
+    existsBy = jest.fn();
 
     service = new WalletsService(
       { transaction } as unknown as DataSource,
-      { findOneBy } as unknown as Repository<Wallet>,
+      { findOneBy, existsBy } as unknown as Repository<Wallet>,
       { findBy } as unknown as Repository<Balance>,
       fallbackRates,
     );
@@ -98,6 +100,23 @@ describe('WalletsService', () => {
       const boom = pgError('23514', 'CHK_wallets_contact');
       transaction.mockRejectedValueOnce(boom);
       await expect(service.create({ email: 'a@b.co' })).rejects.toBe(boom);
+    });
+  });
+
+  describe('assertExists', () => {
+    it('resolves for a known wallet', async () => {
+      existsBy.mockResolvedValue(true);
+      await expect(service.assertExists('wallet-1')).resolves.toBeUndefined();
+      expect(existsBy).toHaveBeenCalledWith({ id: 'wallet-1' });
+    });
+
+    it('throws 404 WALLET_NOT_FOUND naming an unknown id', async () => {
+      existsBy.mockResolvedValue(false);
+      await expect(service.assertExists('missing')).rejects.toMatchObject({
+        code: 'WALLET_NOT_FOUND',
+        status: 404,
+        details: { id: 'missing' },
+      });
     });
   });
 
