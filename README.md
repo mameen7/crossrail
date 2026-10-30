@@ -59,7 +59,7 @@ If you published Postgres on another port, pass the same variable: `POSTGRES_POR
 - Suites truncate their tables before running. The mutation suites assert the ledger invariant (see [Data model](#data-model)) after every test.
 
 Other scripts:
-- `yarn lint`: ESLint and Prettier check.
+- `yarn lint`: type check (`tsc --noEmit`), ESLint and Prettier check.
 - `yarn openapi`: regenerates `openapi.json` without needing a database. An e2e test fails if the committed file differs from what the running app serves.
 - `yarn migration:run`: runs migrations by hand.
 

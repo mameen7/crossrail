@@ -4,7 +4,7 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.ts$": "ts-jest"
+    "^.+\\.ts$": ["ts-jest", { "tsconfig": { "isolatedModules": true } }]
   },
   "setupFiles": ["<rootDir>/env.ts"],
   "globalSetup": "<rootDir>/global-setup.ts",
