@@ -66,6 +66,10 @@ describe('database schema (e2e)', () => {
   });
 
   describe('constraints', () => {
+    // transactions has no wallet foreign keys, so these ids need no wallet rows.
+    const W1 = '00000000-0000-4000-8000-000000000001';
+    const W2 = '00000000-0000-4000-8000-000000000002';
+
     // Every statement runs in a transaction that is rolled back, so the suite
     // leaves no rows behind. Each statement gets its own savepoint: Postgres
     // aborts the whole transaction after a failed statement, and a savepoint
@@ -156,8 +160,8 @@ describe('database schema (e2e)', () => {
     it('rejects an unknown transaction type and non-positive amounts', async () => {
       const insert = (type: string, source: string, destination: string) =>
         `INSERT INTO transactions
-           (type, source_currency, source_amount, destination_currency, destination_amount, fx_rate, rate_source)
-         VALUES ('${type}', 'cNGN', '${source}', 'USDx', '${destination}', '0.000675100000000000', 'fallback')`;
+           (type, wallet_id, source_currency, source_amount, destination_currency, destination_amount, fx_rate, rate_source)
+         VALUES ('${type}', '${W1}', 'cNGN', '${source}', 'USDx', '${destination}', '0.000675100000000000', 'fallback')`;
 
       await inRolledBackTx(async (run) => {
         await expect(run(insert('refund', '1', '1'))).rejects.toThrow(/CHK_transactions_type/);
@@ -168,6 +172,49 @@ describe('database schema (e2e)', () => {
           /CHK_transactions_destination_amount_positive/,
         );
         await expect(run(insert('swap', '1', '0.00067510'))).resolves.toBeDefined();
+      });
+    });
+
+    it('rejects a transaction whose wallet columns do not fit its type', async () => {
+      const insert = (type: string, wallet: string, sender: string, receiver: string) =>
+        `INSERT INTO transactions
+           (type, wallet_id, sender_wallet_id, receiver_wallet_id, source_currency, source_amount,
+            destination_currency, destination_amount, fx_rate, rate_source)
+         VALUES ('${type}', ${wallet}, ${sender}, ${receiver}, 'cNGN', '1', 'cNGN', '1', '1', 'none')`;
+      const [w1, w2] = [`'${W1}'`, `'${W2}'`];
+
+      await inRolledBackTx(async (run) => {
+        for (const type of ['deposit', 'swap']) {
+          await run(insert(type, w1, 'NULL', 'NULL'));
+          for (const bad of [
+            insert(type, 'NULL', 'NULL', 'NULL'),
+            insert(type, w1, w1, 'NULL'),
+            insert(type, w1, 'NULL', w2),
+          ]) {
+            await expect(run(bad)).rejects.toThrow(/CHK_transactions_party_shape/);
+          }
+        }
+        await run(insert('transfer', 'NULL', w1, w2));
+        for (const bad of [
+          insert('transfer', w1, w1, w2),
+          insert('transfer', 'NULL', 'NULL', w2),
+          insert('transfer', 'NULL', w1, 'NULL'),
+        ]) {
+          await expect(run(bad)).rejects.toThrow(/CHK_transactions_party_shape/);
+        }
+      });
+    });
+
+    it('rejects a transfer whose sender is its receiver', async () => {
+      await inRolledBackTx(async (run) => {
+        await expect(
+          run(
+            `INSERT INTO transactions
+               (type, sender_wallet_id, receiver_wallet_id, source_currency, source_amount,
+                destination_currency, destination_amount, fx_rate, rate_source)
+             VALUES ('transfer', '${W1}', '${W1}', 'cNGN', '1', 'cNGN', '1', '1', 'none')`,
+          ),
+        ).rejects.toThrow(/CHK_transactions_distinct_parties/);
       });
     });
 

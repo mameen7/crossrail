@@ -11,7 +11,8 @@ const TRANSACTION_TYPE_SQL_LIST = sqlStringList(TRANSACTION_TYPES);
 
 /**
  * One row per business operation. Deposits and swaps set `walletId`;
- * transfers set `senderWalletId` and `receiverWalletId` instead.
+ * transfers set `senderWalletId` and `receiverWalletId` instead, and the two
+ * differ. The schema enforces both rules.
  *
  * The three (wallet, created_at DESC) indexes back newest-first history
  * reads; the migration declares them with explicit DESC ordering.
@@ -23,6 +24,12 @@ const TRANSACTION_TYPE_SQL_LIST = sqlStringList(TRANSACTION_TYPES);
 @Check('CHK_transactions_type', `"type" IN (${TRANSACTION_TYPE_SQL_LIST})`)
 @Check('CHK_transactions_source_amount_positive', '"source_amount" > 0')
 @Check('CHK_transactions_destination_amount_positive', '"destination_amount" > 0')
+@Check(
+  'CHK_transactions_party_shape',
+  `CASE "type" WHEN 'transfer' THEN "wallet_id" IS NULL AND "sender_wallet_id" IS NOT NULL AND "receiver_wallet_id" IS NOT NULL ` +
+    `ELSE "wallet_id" IS NOT NULL AND "sender_wallet_id" IS NULL AND "receiver_wallet_id" IS NULL END`,
+)
+@Check('CHK_transactions_distinct_parties', '"sender_wallet_id" <> "receiver_wallet_id"')
 export class Transaction {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

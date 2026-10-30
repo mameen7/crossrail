@@ -347,19 +347,35 @@ describe('transaction history and lookup (e2e)', () => {
       await deposit(wallet, 'cNGN', '10');
       const odd = await transfer(wallet, other, 'cNGN', '1', 'cNGN');
       await deposit(wallet, 'cNGN', '1');
-      // Only the application forbids this (no CHECK constraint): the wallet as
-      // owner, sender and receiver at once. Ledger entries are untouched.
-      await db.query(
-        'UPDATE transactions SET wallet_id = $1, receiver_wallet_id = $1 WHERE id = $2',
-        [wallet, odd.id],
+      // The schema forbids the wallet as owner, sender and receiver at once, so
+      // lift its two party CHECKs to prove the query is disjoint on its own;
+      // they are restored from their own catalog definitions, so they cannot drift.
+      const checks = await db.query<{ name: string; def: string }[]>(
+        `SELECT conname AS name, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conname IN ('CHK_transactions_party_shape', 'CHK_transactions_distinct_parties')`,
       );
-
-      const expected = await tableIds(wallet);
-      expect(expected).toHaveLength(3);
-      for (const limit of [1, 2, 3]) {
-        const result = await walk(wallet, { limit });
-        expect(ids(result.items)).toEqual(expected);
-        expectPageShape(result, limit);
+      expect(checks).toHaveLength(2);
+      const alter = (clauses: string[]) =>
+        db.query(`ALTER TABLE transactions ${clauses.join(', ')}`);
+      await alter(checks.map((c) => `DROP CONSTRAINT "${c.name}"`));
+      try {
+        await db.query(
+          'UPDATE transactions SET wallet_id = $1, receiver_wallet_id = $1 WHERE id = $2',
+          [wallet, odd.id],
+        );
+        const expected = await tableIds(wallet);
+        expect(expected).toHaveLength(3);
+        for (const limit of [1, 2, 3]) {
+          const result = await walk(wallet, { limit });
+          expect(ids(result.items)).toEqual(expected);
+          expectPageShape(result, limit);
+        }
+      } finally {
+        await db.query(
+          'UPDATE transactions SET wallet_id = NULL, receiver_wallet_id = $1 WHERE id = $2',
+          [other, odd.id],
+        );
+        await alter(checks.map((c) => `ADD CONSTRAINT "${c.name}" ${c.def}`));
       }
     });
   });
