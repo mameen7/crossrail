@@ -27,7 +27,7 @@ This document records the design decisions behind Crossrail, a stablecoin cross-
 
 ## Data model
 
-Six tables. Signed double-entry ledger rows are the audit trail; `balances` is the lockable, fast-read projection of them.
+Six tables. Signed append-only ledger rows are the audit trail; `balances` is the lockable, fast-read projection of them.
 
 ```sql
 -- wallets: one per email or phone
@@ -108,6 +108,8 @@ fx_rates (
 Ledger entries per transaction type: a deposit writes one credit; a swap writes one debit and one credit on the same wallet; a transfer writes a debit on the sender and a credit on the receiver.
 
 **Invariant:** `SUM(ledger_entries.amount)` grouped by (wallet, currency) equals `balances.amount` for every row — in both directions: a balance with no ledger entries behind it is flagged exactly like a ledger sum with no balance row. The e2e suites that move money (deposits, swaps, transfers, history) assert this after every test.
+
+This is not strict double-entry: deposits have no offsetting debit and conversions do not net to zero per currency, because the sandbox deliberately models no treasury or float. The enforced invariant is journal-equals-projection per (wallet, currency), which is what protects user balances.
 
 Design choices worth naming:
 
@@ -201,6 +203,7 @@ Deliberate cuts, not gaps:
 
 - API-key authentication, with idempotency keys scoped per client and per-key rate limiting
 - A fee engine: spreads and per-corridor fees, recorded as their own ledger entries
+- A chart of accounts with treasury and per-currency FX liquidity accounts, making every transaction zero-sum per currency and adding a conservation invariant — mandatory the moment real deposits or fees exist
 - Outbox pattern plus a queue to simulate async settlement (`pending` → `completed`; the `status` column is already there)
 - A second FX provider behind the same `FxProvider` seam
 - A scheduled reconciliation job asserting the ledger invariant in production, not only in tests

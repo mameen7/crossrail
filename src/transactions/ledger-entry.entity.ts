@@ -4,7 +4,7 @@ import { numericString } from '../common/numeric-string.transformer';
 import { Transaction } from './transaction.entity';
 
 /**
- * Signed double-entry rows: negative is a debit, positive a credit.
+ * Signed append-only rows: negative is a debit, positive a credit.
  * Invariant: SUM(amount) per (wallet, currency) equals `balances.amount`.
  */
 @Entity({ name: 'ledger_entries' })
